@@ -1,0 +1,272 @@
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  namespace: develop
+  labels:
+    app: nginx
+    version: v1
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+        version: v1
+      annotations:
+        # 配置变更时自动重启 Pod
+        checksum/config: "{{ include (print $.Template.BasePath \"/configmap.yaml\") . | sha256sum }}"
+    spec:
+      # 优雅终止等待时间
+      terminationGracePeriodSeconds: 30
+      
+      # 安全上下文
+      securityContext:
+        runAsNonRoot: false
+        fsGroup: 101
+      
+      # 初始化容器 - 复制配置文件到持久卷并初始化目录
+      initContainers:
+      - name: init-config
+        image: nginx:1.25-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "=== 初始化 Nginx 配置 ==="
+          
+          # 1. 初始化配置目录
+          mkdir -p /etc/nginx-config/conf.d
+          mkdir -p /etc/nginx-config/ssl
+          
+          # 2. 从 ConfigMap 复制配置
+          echo "复制 nginx.conf..."
+          cp /configmap/nginx.conf /etc/nginx-config/nginx.conf
+          echo "复制 default.conf..."
+          cp /configmap/default.conf /etc/nginx-config/conf.d/default.conf
+          
+          # 3. 复制 mime.types（如果不存在）
+          if [ ! -f /etc/nginx-config/mime.types ]; then
+            echo "复制 mime.types..."
+            cp /etc/nginx/mime.types /etc/nginx-config/mime.types
+          fi
+          
+          # 4. 设置配置目录权限
+          chmod -R 755 /etc/nginx-config
+          
+          # 5. 初始化日志目录并设置权限
+          echo "初始化日志目录..."
+          mkdir -p /var/log/nginx-logs
+          touch /var/log/nginx-logs/access.log
+          touch /var/log/nginx-logs/error.log
+          chmod -R 755 /var/log/nginx-logs
+          chown -R 101:101 /var/log/nginx-logs
+          
+          # 6. 初始化 HTML 目录
+          echo "初始化 HTML 目录..."
+          if [ ! -f /usr/share/nginx-html/index.html ]; then
+            echo '<h1>Welcome to Nginx on K3s!</h1>' > /usr/share/nginx-html/index.html
+          fi
+          
+          echo "=== 初始化完成 ==="
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx-config
+        - name: nginx-configmap
+          mountPath: /configmap
+        - name: nginx-logs
+          mountPath: /var/log/nginx-logs
+        - name: nginx-html
+          mountPath: /usr/share/nginx-html
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi
+          requests:
+            cpu: 50m
+            memory: 32Mi
+      
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        - containerPort: 443
+          name: https
+          protocol: TCP
+        
+        # 资源限制
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        
+        # 存活探针
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # 就绪探针
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # 启动探针（适用于启动较慢的场景）
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+        
+        # 生命周期钩子
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - nginx -s quit; while killall -0 nginx; do sleep 1; done
+        
+        # 卷挂载
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx
+          readOnly: false
+        - name: nginx-logs
+          mountPath: /var/log/nginx
+        - name: nginx-html
+          mountPath: /usr/share/nginx/html
+        - name: nginx-ssl
+          mountPath: /etc/nginx/ssl
+          readOnly: true
+        - name: nginx-run
+          mountPath: /var/run
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        
+        # 环境变量 - 确保日志路径正确
+        env:
+        - name: NGINX_ENTRYPOINT_QUIET_LOGS
+          value: "1"
+      
+      # 卷定义
+      volumes:
+      - name: nginx-configmap
+        configMap:
+          name: nginx-config
+      - name: nginx-config
+        persistentVolumeClaim:
+          claimName: nginx-config-pvc
+      - name: nginx-logs
+        persistentVolumeClaim:
+          claimName: nginx-logs-pvc
+      - name: nginx-html
+        persistentVolumeClaim:
+          claimName: nginx-html-pvc
+      - name: nginx-ssl
+        persistentVolumeClaim:
+          claimName: nginx-ssl-pvc
+      - name: nginx-run
+        emptyDir: {}
+      - name: nginx-cache
+        emptyDir: {}
+      
+      # 节点亲和性（可选）
+      # affinity:
+      #   podAntiAffinity:
+      #     preferredDuringSchedulingIgnoredDuringExecution:
+      #     - weight: 100
+      #       podAffinityTerm:
+      #         labelSelector:
+      #           matchExpressions:
+      #           - key: app
+      #             operator: In
+      #             values:
+      #             - nginx
+      #         topologyKey: kubernetes.io/hostname
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  namespace: develop
+  labels:
+    app: nginx
+spec:
+  selector:
+    app: nginx
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 443
+  type: LoadBalancer
+  # 会话亲和性（可选）
+  # sessionAffinity: ClientIP
+  # sessionAffinityConfig:
+  #   clientIP:
+  #     timeoutSeconds: 10800
+---
+# Ingress（可选 - 如果使用 Traefik 或其他 Ingress Controller）
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: nginx-ingress
+#   namespace: develop
+#   labels:
+#     app: nginx
+#   annotations:
+#     kubernetes.io/ingress.class: traefik
+#     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+# spec:
+#   rules:
+#   - host: nginx.example.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: nginx-service
+#             port:
+#               number: 80
+#   tls:
+#   - hosts:
+#     - nginx.example.com
+#     secretName: nginx-tls-secret

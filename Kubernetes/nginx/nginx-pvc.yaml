@@ -1,0 +1,168 @@
+# StorageClass 定义（可选，用于本地存储）
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nginx-storage
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+# 配置文件存储 PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nginx-config-pv
+  labels:
+    type: local
+    app: nginx
+    volume-type: config
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nginx-storage
+  hostPath:
+    path: /opt/k3s/app/nginx/config
+    type: DirectoryOrCreate
+---
+# 网站文件存储 PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nginx-html-pv
+  labels:
+    type: local
+    app: nginx
+    volume-type: html
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nginx-storage
+  hostPath:
+    path: /opt/k3s/app/nginx/html
+    type: DirectoryOrCreate
+---
+# 日志存储 PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nginx-logs-pv
+  labels:
+    type: local
+    app: nginx
+    volume-type: logs
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nginx-storage
+  hostPath:
+    path: /opt/k3s/app/nginx/logs
+    type: DirectoryOrCreate
+---
+# SSL证书存储 PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nginx-ssl-pv
+  labels:
+    type: local
+    app: nginx
+    volume-type: ssl
+spec:
+  capacity:
+    storage: 100Mi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nginx-storage
+  hostPath:
+    path: /opt/k3s/app/nginx/ssl
+    type: DirectoryOrCreate
+---
+# PVC 定义 - 配置文件
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nginx-config-pvc
+  namespace: develop
+  labels:
+    app: nginx
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nginx-storage
+  resources:
+    requests:
+      storage: 1Gi
+  selector:
+    matchLabels:
+      app: nginx
+      volume-type: config
+---
+# PVC 定义 - HTML文件
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nginx-html-pvc
+  namespace: develop
+  labels:
+    app: nginx
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nginx-storage
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      app: nginx
+      volume-type: html
+---
+# PVC 定义 - 日志文件
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nginx-logs-pvc
+  namespace: develop
+  labels:
+    app: nginx
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nginx-storage
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      app: nginx
+      volume-type: logs
+---
+# PVC 定义 - SSL证书
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nginx-ssl-pvc
+  namespace: develop
+  labels:
+    app: nginx
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nginx-storage
+  resources:
+    requests:
+      storage: 100Mi
+  selector:
+    matchLabels:
+      app: nginx
+      volume-type: ssl

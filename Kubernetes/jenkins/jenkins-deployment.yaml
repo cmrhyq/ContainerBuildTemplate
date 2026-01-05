@@ -1,0 +1,287 @@
+# Jenkins Deployment - 主控制器部署配置
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins-controller
+  namespace: jenkins
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/version: "lts"
+spec:
+  replicas: 1  # Jenkins Controller 只需要单实例
+  revisionHistoryLimit: 5
+  strategy:
+    type: Recreate  # Jenkins 不支持滚动更新，需要使用 Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jenkins
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jenkins
+        app.kubernetes.io/component: controller
+      annotations:
+        # 配置变更时触发重新部署
+        checksum/config: "update-this-on-config-change"
+    spec:
+      serviceAccountName: jenkins
+      
+      # 优雅终止等待时间
+      terminationGracePeriodSeconds: 120
+      
+      # 安全上下文
+      securityContext:
+        runAsUser: 1000      # Jenkins 用户 UID
+        runAsGroup: 1000     # Jenkins 用户 GID
+        fsGroup: 1000        # 文件系统组 - 自动设置 PVC 权限
+        runAsNonRoot: true
+      
+      # 初始化容器
+      initContainers:
+        # 1. 初始化目录和配置
+        - name: init-config
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "=== 初始化 Jenkins 配置 ==="
+              
+              # 确保目录存在（fsGroup 会自动处理权限）
+              mkdir -p /var/jenkins_home/plugins
+              mkdir -p /var/jenkins_home/jobs
+              mkdir -p /var/jenkins_home/secrets
+              mkdir -p /var/jenkins_home/init.groovy.d
+              mkdir -p /var/jenkins_home/casc_configs
+              
+              # 复制 JCasC 配置
+              if [ -f /config/jenkins.yaml ]; then
+                cp /config/jenkins.yaml /var/jenkins_home/casc_configs/jenkins.yaml
+                echo "JCasC 配置已复制"
+              fi
+              
+              echo "=== 初始化完成 ==="
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+            - name: jenkins-config
+              mountPath: /config
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+        
+        # 2. 安装必要的插件
+        - name: install-plugins
+          image: jenkins/jenkins:lts-jdk17
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "=== 安装 Jenkins 插件 ==="
+              
+              # 检查是否已安装过插件（避免重复安装）
+              if [ -f /var/jenkins_home/plugins/kubernetes.jpi ]; then
+                echo "插件已存在，跳过安装"
+                exit 0
+              fi
+              
+              # 安装核心插件
+              jenkins-plugin-cli --plugins \
+                kubernetes:4246.v5a_12b_1fe120e \
+                workflow-aggregator:600.vb_57cdd26fdd7 \
+                git:5.2.2 \
+                configuration-as-code:1810.v9b_c30a_249a_4c \
+                credentials-binding:677.vdc9d38cb_254d \
+                pipeline-stage-view:2.34 \
+                blueocean:1.27.14 \
+                docker-workflow:580.vc0c340f
+              
+              echo "=== 插件安装完成 ==="
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+      
+      containers:
+        - name: jenkins
+          image: jenkins/jenkins:lts-jdk17
+          imagePullPolicy: IfNotPresent
+          
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: agent
+              containerPort: 50000
+              protocol: TCP
+          
+          # 环境变量
+          env:
+            # JVM 参数
+            - name: JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: jenkins-config
+                  key: JAVA_OPTS
+            
+            # Jenkins 启动参数
+            - name: JENKINS_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: jenkins-config
+                  key: JENKINS_OPTS
+            
+            # JCasC 配置路径
+            - name: CASC_JENKINS_CONFIG
+              value: "/var/jenkins_home/casc_configs"
+            
+            # 管理员凭据
+            - name: JENKINS_ADMIN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: jenkins-admin-secret
+                  key: jenkins-admin-user
+            - name: JENKINS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jenkins-admin-secret
+                  key: jenkins-admin-password
+            
+            # 跳过初始设置向导
+            - name: JENKINS_OPTS
+              value: "--argumentsRealm.passwd.$(JENKINS_ADMIN_ID)=$(JENKINS_ADMIN_PASSWORD) --argumentsRealm.roles.$(JENKINS_ADMIN_ID)=admin"
+            
+            # Pod 信息
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          
+          # 资源限制
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: 4000m
+              memory: 8Gi
+          
+          # 存活探针
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 5
+            successThreshold: 1
+          
+          # 就绪探针
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          
+          # 启动探针 - Jenkins 启动较慢
+          startupProbe:
+            httpGet:
+              path: /login
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30  # 允许最多 5 分钟启动时间
+          
+          # 生命周期钩子
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "Jenkins 正在关闭..."
+                    # 等待正在运行的构建完成（最多等待 60 秒）
+                    sleep 30
+          
+          # 卷挂载
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+            - name: jenkins-config
+              mountPath: /var/jenkins_config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          
+          # 容器安全上下文
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+      
+      # 卷定义
+      volumes:
+        - name: jenkins-home
+          persistentVolumeClaim:
+            claimName: jenkins-home-pvc
+        - name: jenkins-config
+          configMap:
+            name: jenkins-config
+        - name: tmp
+          emptyDir: {}
+      
+      # 调度配置
+      # 节点选择器（可选）
+      # nodeSelector:
+      #   kubernetes.io/os: linux
+      #   node-role.kubernetes.io/worker: "true"
+      
+      # 容忍度（可选）
+      # tolerations:
+      #   - key: "dedicated"
+      #     operator: "Equal"
+      #     value: "jenkins"
+      #     effect: "NoSchedule"
+      
+      # Pod 反亲和性 - 避免与其他 Jenkins 实例调度到同一节点
+      # affinity:
+      #   podAntiAffinity:
+      #     preferredDuringSchedulingIgnoredDuringExecution:
+      #       - weight: 100
+      #         podAffinityTerm:
+      #           labelSelector:
+      #             matchExpressions:
+      #               - key: app.kubernetes.io/name
+      #                 operator: In
+      #                 values:
+      #                   - jenkins
+      #           topologyKey: kubernetes.io/hostname
+

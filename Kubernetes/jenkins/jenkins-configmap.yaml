@@ -1,0 +1,248 @@
+# Jenkins ConfigMap - 配置文件
+# 包含 JCasC (Jenkins Configuration as Code) 配置
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-config
+  namespace: jenkins
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: config
+data:
+  # JVM 参数配置
+  JAVA_OPTS: >-
+    -Xmx2048m 
+    -Xms1024m 
+    -XX:+UseG1GC 
+    -XX:+UseStringDeduplication 
+    -XX:+ParallelRefProcEnabled 
+    -XX:+DisableExplicitGC 
+    -Duser.timezone=Asia/Shanghai 
+    -Djava.awt.headless=true 
+    -Dhudson.slaves.NodeProvisioner.initialDelay=0 
+    -Dhudson.slaves.NodeProvisioner.MARGIN=50 
+    -Dhudson.slaves.NodeProvisioner.MARGIN0=0.85
+
+  # Jenkins 启动参数
+  JENKINS_OPTS: >-
+    --httpPort=8080
+
+  # Jenkins Configuration as Code (JCasC)
+  jenkins.yaml: |
+    jenkins:
+      systemMessage: "Welcome to Jenkins on Kubernetes - Managed by JCasC"
+      numExecutors: 0  # 不在 controller 上运行任务，全部使用 agent
+      mode: EXCLUSIVE
+      scmCheckoutRetryCount: 3
+      
+      # 安全配置
+      securityRealm:
+        local:
+          allowsSignup: false
+          users:
+            - id: "${JENKINS_ADMIN_ID}"
+              name: "Administrator"
+              password: "${JENKINS_ADMIN_PASSWORD}"
+      
+      authorizationStrategy:
+        loggedInUsersCanDoAnything:
+          allowAnonymousRead: false
+      
+      # 全局安全配置
+      remotingSecurity:
+        enabled: true
+      
+      # 云配置 - Kubernetes Plugin
+      clouds:
+        - kubernetes:
+            name: "kubernetes"
+            serverUrl: "https://kubernetes.default.svc.cluster.local"
+            namespace: "jenkins"
+            jenkinsUrl: "http://jenkins-service:8080"
+            jenkinsTunnel: "jenkins-agent-service:50000"
+            containerCapStr: "100"
+            maxRequestsPerHostStr: "64"
+            retentionTimeout: 5
+            connectTimeout: 10
+            readTimeout: 20
+            
+            templates:
+              # 默认 JNLP Agent
+              - name: "default-agent"
+                label: "jenkins-agent"
+                nodeUsageMode: NORMAL
+                containers:
+                  - name: "jnlp"
+                    image: "jenkins/inbound-agent:latest"
+                    alwaysPullImage: false
+                    workingDir: "/home/jenkins/agent"
+                    ttyEnabled: true
+                    resourceRequestCpu: "200m"
+                    resourceRequestMemory: "256Mi"
+                    resourceLimitCpu: "1000m"
+                    resourceLimitMemory: "1Gi"
+                volumes:
+                  - emptyDirVolume:
+                      mountPath: "/tmp"
+                      memory: false
+                idleMinutes: 30
+                activeDeadlineSeconds: 3600
+                slaveConnectTimeout: 300
+              
+              # Maven 构建 Agent
+              - name: "maven-agent"
+                label: "maven"
+                nodeUsageMode: EXCLUSIVE
+                containers:
+                  - name: "jnlp"
+                    image: "jenkins/inbound-agent:latest"
+                    alwaysPullImage: false
+                    workingDir: "/home/jenkins/agent"
+                    ttyEnabled: true
+                    resourceRequestCpu: "100m"
+                    resourceRequestMemory: "256Mi"
+                  - name: "maven"
+                    image: "maven:3.9-eclipse-temurin-17"
+                    alwaysPullImage: false
+                    workingDir: "/home/jenkins/agent"
+                    ttyEnabled: true
+                    command: "sleep"
+                    args: "infinity"
+                    resourceRequestCpu: "500m"
+                    resourceRequestMemory: "1Gi"
+                    resourceLimitCpu: "2000m"
+                    resourceLimitMemory: "4Gi"
+                volumes:
+                  - persistentVolumeClaim:
+                      claimName: "maven-repo-pvc"
+                      mountPath: "/root/.m2/repository"
+                      readOnly: false
+                idleMinutes: 60
+                activeDeadlineSeconds: 7200
+              
+              # Node.js 构建 Agent
+              - name: "nodejs-agent"
+                label: "nodejs node"
+                nodeUsageMode: EXCLUSIVE
+                containers:
+                  - name: "jnlp"
+                    image: "jenkins/inbound-agent:latest"
+                    alwaysPullImage: false
+                    workingDir: "/home/jenkins/agent"
+                    ttyEnabled: true
+                    resourceRequestCpu: "100m"
+                    resourceRequestMemory: "256Mi"
+                  - name: "nodejs"
+                    image: "node:20-alpine"
+                    alwaysPullImage: false
+                    workingDir: "/home/jenkins/agent"
+                    ttyEnabled: true
+                    command: "sleep"
+                    args: "infinity"
+                    resourceRequestCpu: "500m"
+                    resourceRequestMemory: "512Mi"
+                    resourceLimitCpu: "2000m"
+                    resourceLimitMemory: "2Gi"
+                idleMinutes: 30
+                activeDeadlineSeconds: 3600
+              
+              # Docker-in-Docker Agent
+              - name: "docker-agent"
+                label: "docker dind"
+                nodeUsageMode: EXCLUSIVE
+                containers:
+                  - name: "jnlp"
+                    image: "jenkins/inbound-agent:latest"
+                    alwaysPullImage: false
+                    workingDir: "/home/jenkins/agent"
+                    ttyEnabled: true
+                    resourceRequestCpu: "100m"
+                    resourceRequestMemory: "256Mi"
+                  - name: "docker"
+                    image: "docker:24-dind"
+                    alwaysPullImage: false
+                    workingDir: "/home/jenkins/agent"
+                    ttyEnabled: true
+                    privileged: true
+                    resourceRequestCpu: "500m"
+                    resourceRequestMemory: "1Gi"
+                    resourceLimitCpu: "2000m"
+                    resourceLimitMemory: "4Gi"
+                    envVars:
+                      - envVar:
+                          key: "DOCKER_TLS_CERTDIR"
+                          value: ""
+                volumes:
+                  - emptyDirVolume:
+                      mountPath: "/var/lib/docker"
+                      memory: false
+                idleMinutes: 30
+                activeDeadlineSeconds: 7200
+    
+    # 安全配置
+    security:
+      scriptApproval:
+        approvedSignatures: []
+      globalJobDslSecurityConfiguration:
+        useScriptSecurity: true
+    
+    # 未分类配置
+    unclassified:
+      location:
+        url: "http://jenkins.example.com/"
+        adminAddress: "admin@example.com"
+      
+      # Git 全局配置
+      gitSCM:
+        globalConfigName: "Jenkins"
+        globalConfigEmail: "jenkins@example.com"
+        createAccountBasedOnEmail: false
+      
+      # 构建丢弃策略
+      buildDiscarders:
+        configuredBuildDiscarders:
+          - "jobBuildDiscarder"
+    
+    # 工具配置
+    tool:
+      git:
+        installations:
+          - name: "Default"
+            home: "git"
+      
+      jdk:
+        installations:
+          - name: "JDK17"
+            home: "/opt/java/openjdk"
+      
+      maven:
+        installations:
+          - name: "Maven3"
+            home: "/opt/maven"
+
+  # 插件安装列表
+  plugins.txt: |
+    kubernetes:latest
+    workflow-aggregator:latest
+    git:latest
+    github:latest
+    github-branch-source:latest
+    configuration-as-code:latest
+    credentials-binding:latest
+    timestamper:latest
+    ws-cleanup:latest
+    pipeline-stage-view:latest
+    blueocean:latest
+    docker-workflow:latest
+    matrix-auth:latest
+    antisamy-markup-formatter:latest
+    build-timeout:latest
+    email-ext:latest
+    mailer:latest
+    ssh-agent:latest
+    pipeline-github-lib:latest
+    pipeline-utility-steps:latest
+    job-dsl:latest
+    locale:latest
+

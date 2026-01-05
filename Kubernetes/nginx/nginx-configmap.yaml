@@ -1,0 +1,145 @@
+# ConfigMap for nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: develop
+  labels:
+    app: nginx
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log notice;
+    pid /var/run/nginx.pid;
+
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+
+        access_log /var/log/nginx/access.log main;
+
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 100m;
+
+        # Gzip 压缩配置
+        gzip on;
+        gzip_vary on;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_min_length 1000;
+        gzip_types text/plain text/css application/json application/javascript 
+                   text/xml application/xml application/xml+rss text/javascript
+                   image/svg+xml;
+
+        # 安全头配置
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+
+        # 包含额外的配置文件
+        include /etc/nginx/conf.d/*.conf;
+    }
+
+  default.conf: |
+    # 默认 HTTP 服务器配置
+    server {
+        listen 80;
+        server_name _;
+
+        access_log  /var/log/nginx/host.access.log  main;
+
+        # 根路径 - 静态文件服务
+        location / {
+            root /usr/share/nginx/html;
+            index index.html index.htm;
+            try_files $uri $uri/ =404;
+        }
+
+        # 健康检查端点
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        # Nginx 状态监控（仅允许内部访问）
+        location /nginx_status {
+            stub_status on;
+            access_log off;
+            allow 127.0.0.1;
+            allow 10.0.0.0/8;
+            allow 172.16.0.0/12;
+            allow 192.168.0.0/16;
+            deny all;
+        }
+
+        # Dashboard 反向代理
+        location /dashboard/ {
+            proxy_pass http://134.175.168.219:9090/;
+            rewrite ^/dashboard/(.*)$ /$1 break;
+            
+            # 代理头配置
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # WebSocket 支持
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            # 超时配置
+            proxy_connect_timeout 300s;
+            proxy_send_timeout 300s;
+            proxy_read_timeout 300s;
+            
+            # 缓冲配置
+            proxy_buffering off;
+        }
+
+        # 错误页面
+        error_page 404 /404.html;
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html {
+            root /usr/share/nginx/html;
+        }
+    }
+
+    # HTTPS 服务器配置（取消注释启用）
+    # server {
+    #     listen 443 ssl http2;
+    #     server_name _;
+    #
+    #     ssl_certificate /etc/nginx/ssl/tls.crt;
+    #     ssl_certificate_key /etc/nginx/ssl/tls.key;
+    #     ssl_session_timeout 1d;
+    #     ssl_session_cache shared:SSL:50m;
+    #     ssl_session_tickets off;
+    #
+    #     # 现代 SSL 配置
+    #     ssl_protocols TLSv1.2 TLSv1.3;
+    #     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    #     ssl_prefer_server_ciphers off;
+    #
+    #     location / {
+    #         root /usr/share/nginx/html;
+    #         index index.html index.htm;
+    #         try_files $uri $uri/ =404;
+    #     }
+    # }

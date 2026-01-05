@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: image-cleanup
+  namespace: kube-system
+spec:
+  schedule: "0 2 * * *"  # 每天凌晨2点执行
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          hostPID: true
+          containers:
+          - name: cleanup
+            image: busybox
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Cleaning unused images..."
+              crictl rmi --prune
+            securityContext:
+              privileged: true
+            volumeMounts:
+            - name: cri-socket
+              mountPath: /run/k3s/containerd/containerd.sock
+          volumes:
+          - name: cri-socket
+            hostPath:
+              path: /run/k3s/containerd/containerd.sock

@@ -1,0 +1,10 @@
+# Jenkins Namespace - 命名空间定义
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jenkins
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: ci-cd
+    app.kubernetes.io/part-of: devops
+

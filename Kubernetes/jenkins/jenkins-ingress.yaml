@@ -1,0 +1,107 @@
+# Jenkins Ingress - 外部访问配置
+
+---
+# Ingress 配置 - 支持 Nginx Ingress Controller
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins-ingress
+  namespace: jenkins
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Nginx Ingress Controller 配置
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    
+    # WebSocket 支持（Blue Ocean 需要）
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    
+    # SSL 重定向
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # 会话亲和性
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "jenkins-route"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    
+    # 安全头
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+    
+    # cert-manager 自动证书（可选）
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  
+  # TLS 配置
+  tls:
+    - hosts:
+        - jenkins.example.com
+      secretName: jenkins-tls-secret
+  
+  rules:
+    - host: jenkins.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jenkins-service
+                port:
+                  number: 8080
+
+---
+# Traefik Ingress（可选 - K3s 默认使用 Traefik）
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: jenkins-ingress-traefik
+#   namespace: jenkins
+#   labels:
+#     app.kubernetes.io/name: jenkins
+#     app.kubernetes.io/component: ingress
+#   annotations:
+#     kubernetes.io/ingress.class: traefik
+#     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+#     traefik.ingress.kubernetes.io/router.middlewares: jenkins-headers@kubernetescrd
+# spec:
+#   rules:
+#     - host: jenkins.example.com
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: jenkins-service
+#                 port:
+#                   number: 8080
+#   tls:
+#     - hosts:
+#         - jenkins.example.com
+#       secretName: jenkins-tls-secret
+
+---
+# TLS Secret（手动创建证书时使用）
+# 生产环境建议使用 cert-manager 自动管理证书
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: jenkins-tls-secret
+#   namespace: jenkins
+# type: kubernetes.io/tls
+# data:
+#   tls.crt: <base64-encoded-certificate>
+#   tls.key: <base64-encoded-private-key>
+
