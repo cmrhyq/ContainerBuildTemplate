@@ -59,9 +59,12 @@ spec:
               mkdir -p /var/jenkins_home/casc_configs
               
               # 复制 JCasC 配置
-              if [ -f /config/jenkins.yaml ]; then
-                cp /config/jenkins.yaml /var/jenkins_home/casc_configs/jenkins.yaml
+              if [ -f /var/jenkins_config/jenkins.yaml ]; then
+                cp /var/jenkins_config/jenkins.yaml /var/jenkins_home/casc_configs/jenkins.yaml
                 echo "JCasC 配置已复制"
+              else
+                echo "警告: JCasC 配置文件不存在!"
+                ls -la /var/jenkins_config/
               fi
               
               echo "=== 初始化完成 ==="
@@ -69,7 +72,7 @@ spec:
             - name: jenkins-home
               mountPath: /var/jenkins_home
             - name: jenkins-config
-              mountPath: /config
+              mountPath: /var/jenkins_config
           resources:
             limits:
               cpu: 100m
@@ -161,10 +164,6 @@ spec:
                 secretKeyRef:
                   name: jenkins-admin-secret
                   key: jenkins-admin-password
-            
-            # 跳过初始设置向导
-            - name: JENKINS_OPTS
-              value: "--argumentsRealm.passwd.$(JENKINS_ADMIN_ID)=$(JENKINS_ADMIN_PASSWORD) --argumentsRealm.roles.$(JENKINS_ADMIN_ID)=admin"
             
             # Pod 信息
             - name: POD_NAME

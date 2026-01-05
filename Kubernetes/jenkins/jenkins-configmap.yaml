@@ -20,6 +20,8 @@ data:
     -XX:+DisableExplicitGC 
     -Duser.timezone=Asia/Shanghai 
     -Djava.awt.headless=true 
+    -Djenkins.install.runSetupWizard=false
+    -Dcasc.jenkins.config=/var/jenkins_home/casc_configs
     -Dhudson.slaves.NodeProvisioner.initialDelay=0 
     -Dhudson.slaves.NodeProvisioner.MARGIN=50 
     -Dhudson.slaves.NodeProvisioner.MARGIN0=0.85
