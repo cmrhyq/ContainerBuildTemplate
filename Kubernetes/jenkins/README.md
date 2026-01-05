@@ -2,7 +2,8 @@
 
 ## 📋 概述
 
-本项目提供了在 Kubernetes 集群上部署 Jenkins CI/CD 服务器的最佳实践配置。
+本项目提供了在 Kubernetes 集群上部署 Jenkins CI/CD 服务器的配置。
+**配置方式**：通过 Jenkins Web 界面进行配置（非 JCasC 方式）。
 
 ## 🏗️ 架构说明
 
@@ -39,8 +40,8 @@
 jenkins/
 ├── jenkins-namespace.yaml    # 命名空间定义
 ├── jenkins-rbac.yaml         # RBAC 权限配置
-├── jenkins-secret.yaml       # 敏感信息存储
-├── jenkins-configmap.yaml    # 配置文件 (JCasC)
+├── jenkins-secret.yaml       # 敏感信息存储（可选）
+├── jenkins-configmap.yaml    # JVM 和启动参数配置
 ├── jenkins-pvc.yaml          # 持久卷声明
 ├── jenkins-deployment.yaml   # 主控制器部署
 ├── jenkins-service.yaml      # 服务暴露
@@ -85,68 +86,397 @@ kubectl apply -f jenkins/jenkins-service.yaml
 kubectl apply -f jenkins/jenkins-ingress.yaml
 ```
 
-## ⚙️ 配置说明
+---
 
-### 1. 修改管理员凭据
+## 🔧 首次启动配置指南
 
-编辑 `jenkins-secret.yaml`：
+Jenkins 首次启动时会显示安装向导，请按以下步骤完成配置：
 
-```yaml
-stringData:
-  jenkins-admin-user: "your-admin-username"
-  jenkins-admin-password: "your-secure-password"
+### 步骤 1：获取初始管理员密码
+
+```bash
+# 等待 Pod 运行
+kubectl get pods -n jenkins -w
+
+# 获取初始管理员密码
+kubectl exec -n jenkins deployment/jenkins-controller -- cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
-### 2. 配置域名
+### 步骤 2：访问 Jenkins
 
-编辑 `jenkins-ingress.yaml`：
+- 通过 Ingress 访问: `https://jenkins.your-domain.com`
+- 或通过 Port Forward: 
+  ```bash
+  kubectl port-forward -n jenkins svc/jenkins-service 8080:8080
+  # 访问 http://localhost:8080
+  ```
 
-```yaml
-spec:
-  tls:
-    - hosts:
-        - jenkins.your-domain.com
-      secretName: jenkins-tls-secret
-  rules:
-    - host: jenkins.your-domain.com
-```
+### 步骤 3：完成安装向导
 
-### 3. 调整资源限制
+1. 输入初始管理员密码
+2. 选择 **"Install suggested plugins"** 或 **"Select plugins to install"**
+3. 创建管理员账户
+4. 配置 Jenkins URL
 
-编辑 `jenkins-deployment.yaml`：
+---
 
-```yaml
-resources:
-  requests:
-    cpu: 500m
-    memory: 2Gi
-  limits:
-    cpu: 4000m
-    memory: 8Gi
-```
+## ⚙️ Jenkins 界面配置详细指南
 
-### 4. 配置存储类
+完成安装向导后，请按以下步骤配置 Jenkins：
 
-编辑 `jenkins-pvc.yaml`，取消注释并修改：
+### 1. 系统配置
 
-```yaml
-storageClassName: your-storage-class
-```
+**路径**: `Manage Jenkins` → `System`
 
-## 🔧 JCasC 配置
+#### 1.1 系统消息
+| 配置项 | 推荐值 |
+|--------|--------|
+| System Message | `Welcome to Jenkins on Kubernetes` |
 
-Jenkins Configuration as Code (JCasC) 配置位于 `jenkins-configmap.yaml`。
+#### 1.2 执行器数量
+| 配置项 | 推荐值 | 说明 |
+|--------|--------|------|
+| # of executors | `0` | 不在 Controller 上运行任务，全部使用 Agent |
 
-### 预配置的 Agent 模板
+#### 1.3 Jenkins Location
+| 配置项 | 示例值 |
+|--------|--------|
+| Jenkins URL | `http://jenkins.example.com/` |
+| System Admin e-mail address | `admin@example.com` |
 
-| 模板名称 | 标签 | 用途 |
-|---------|------|------|
-| default-agent | jenkins-agent | 通用构建任务 |
-| maven-agent | maven | Java/Maven 项目 |
-| nodejs-agent | nodejs, node | Node.js 项目 |
-| docker-agent | docker, dind | 需要 Docker 的构建 |
+#### 1.4 Git 全局配置
+| 配置项 | 推荐值 |
+|--------|--------|
+| Global Config user.name | `Jenkins` |
+| Global Config user.email | `jenkins@example.com` |
 
-### 在 Pipeline 中使用
+---
+
+### 2. 安全配置
+
+**路径**: `Manage Jenkins` → `Security`
+
+#### 2.1 Security Realm（认证方式）
+选择 **Jenkins' own user database**：
+| 配置项 | 推荐值 |
+|--------|--------|
+| Allow users to sign up | ❌ 不勾选 |
+
+#### 2.2 Authorization（授权策略）
+选择 **Logged-in users can do anything**：
+| 配置项 | 推荐值 |
+|--------|--------|
+| Allow anonymous read access | ❌ 不勾选 |
+
+#### 2.3 Agent → Controller Security
+| 配置项 | 推荐值 |
+|--------|--------|
+| Enable Agent → Controller Access Control | ✅ 勾选 |
+
+---
+
+### 3. Kubernetes Cloud 配置（重要）
+
+**路径**: `Manage Jenkins` → `Clouds` → `New cloud` → `Kubernetes`
+
+#### 3.1 Kubernetes Cloud 基础配置
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| Name | `kubernetes` | 云名称 |
+| Kubernetes URL | `https://kubernetes.default.svc.cluster.local` | 集群内部地址 |
+| Kubernetes Namespace | `jenkins` | Agent 运行的命名空间 |
+| Jenkins URL | `http://jenkins-service:8080` | Controller 服务地址 |
+| Jenkins tunnel | `jenkins-agent-service:50000` | Agent 连接地址 |
+| Container Cap | `100` | 最大并发 Pod 数 |
+| Max connections to Kubernetes API | `64` | API 最大连接数 |
+| Connection Timeout | `10` | 连接超时（秒） |
+| Read Timeout | `20` | 读取超时（秒） |
+
+#### 3.2 Pod Template - Default Agent
+
+点击 **"Add Pod Template"** 添加以下模板：
+
+**基础配置**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `default-agent` |
+| Labels | `jenkins-agent` |
+| Usage | `Use this node as much as possible` |
+| Idle minutes | `30` |
+| Active deadline | `3600` |
+
+**Container - jnlp**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `jnlp` |
+| Docker image | `jenkins/inbound-agent:latest` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Request CPU | `200m` |
+| Request Memory | `256Mi` |
+| Limit CPU | `1000m` |
+| Limit Memory | `1Gi` |
+
+#### 3.3 Pod Template - Maven Agent
+
+**基础配置**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `maven-agent` |
+| Labels | `maven` |
+| Usage | `Only build jobs with label expressions matching this node` |
+| Idle minutes | `60` |
+| Active deadline | `7200` |
+
+**Container 1 - jnlp**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `jnlp` |
+| Docker image | `jenkins/inbound-agent:latest` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Request CPU | `100m` |
+| Request Memory | `256Mi` |
+
+**Container 2 - maven**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `maven` |
+| Docker image | `maven:3.9-eclipse-temurin-17` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Command to run | `sleep` |
+| Arguments | `infinity` |
+| Request CPU | `500m` |
+| Request Memory | `1Gi` |
+| Limit CPU | `2000m` |
+| Limit Memory | `4Gi` |
+
+**Volume（可选）**：
+| 类型 | 配置 |
+|------|------|
+| Persistent Volume Claim | Claim: `maven-repo-pvc`, Mount path: `/root/.m2/repository` |
+
+#### 3.4 Pod Template - Node.js Agent
+
+**基础配置**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `nodejs-agent` |
+| Labels | `nodejs node` |
+| Usage | `Only build jobs with label expressions matching this node` |
+| Idle minutes | `30` |
+| Active deadline | `3600` |
+
+**Container 1 - jnlp**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `jnlp` |
+| Docker image | `jenkins/inbound-agent:latest` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Request CPU | `100m` |
+| Request Memory | `256Mi` |
+
+**Container 2 - nodejs**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `nodejs` |
+| Docker image | `node:20-alpine` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Command to run | `sleep` |
+| Arguments | `infinity` |
+| Request CPU | `500m` |
+| Request Memory | `512Mi` |
+| Limit CPU | `2000m` |
+| Limit Memory | `2Gi` |
+
+#### 3.5 Pod Template - Python Agent
+
+**基础配置**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `python-agent` |
+| Labels | `python python3` |
+| Usage | `Only build jobs with label expressions matching this node` |
+| Idle minutes | `30` |
+| Active deadline | `3600` |
+
+**Container 1 - jnlp**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `jnlp` |
+| Docker image | `jenkins/inbound-agent:latest` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Request CPU | `100m` |
+| Request Memory | `256Mi` |
+
+**Container 2 - python**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `python` |
+| Docker image | `python:3.12-slim` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Command to run | `sleep` |
+| Arguments | `infinity` |
+| Request CPU | `500m` |
+| Request Memory | `512Mi` |
+| Limit CPU | `2000m` |
+| Limit Memory | `2Gi` |
+
+**Volume（可选）**：
+| 类型 | 配置 |
+|------|------|
+| Persistent Volume Claim | Claim: `pip-cache-pvc`, Mount path: `/root/.cache/pip` |
+
+#### 3.6 Pod Template - Python Data Science Agent
+
+**基础配置**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `python-ds-agent` |
+| Labels | `python-ds datascience ml` |
+| Usage | `Only build jobs with label expressions matching this node` |
+| Idle minutes | `60` |
+| Active deadline | `7200` |
+
+**Container 1 - jnlp**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `jnlp` |
+| Docker image | `jenkins/inbound-agent:latest` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Request CPU | `100m` |
+| Request Memory | `256Mi` |
+
+**Container 2 - python-ds**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `python-ds` |
+| Docker image | `python:3.12` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Command to run | `sleep` |
+| Arguments | `infinity` |
+| Request CPU | `1000m` |
+| Request Memory | `2Gi` |
+| Limit CPU | `4000m` |
+| Limit Memory | `8Gi` |
+
+> **说明**：使用完整的 `python:3.12` 镜像（非 slim），便于安装 numpy、pandas、scikit-learn 等需要编译的库。
+
+**Volume（可选）**：
+| 类型 | 配置 |
+|------|------|
+| Persistent Volume Claim | Claim: `pip-cache-pvc`, Mount path: `/root/.cache/pip` |
+
+#### 3.7 Pod Template - Docker Agent
+
+**基础配置**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `docker-agent` |
+| Labels | `docker dind` |
+| Usage | `Only build jobs with label expressions matching this node` |
+| Idle minutes | `30` |
+| Active deadline | `7200` |
+
+**Container 1 - jnlp**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `jnlp` |
+| Docker image | `jenkins/inbound-agent:latest` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Request CPU | `100m` |
+| Request Memory | `256Mi` |
+
+**Container 2 - docker**：
+| 配置项 | 值 |
+|--------|-----|
+| Name | `docker` |
+| Docker image | `docker:24-dind` |
+| Working directory | `/home/jenkins/agent` |
+| Allocate pseudo-TTY | ✅ |
+| Run in privileged mode | ✅ |
+| Request CPU | `500m` |
+| Request Memory | `1Gi` |
+| Limit CPU | `2000m` |
+| Limit Memory | `4Gi` |
+
+**Environment Variable**：
+| Key | Value |
+|-----|-------|
+| DOCKER_TLS_CERTDIR | （留空） |
+
+**Volume**：
+| 类型 | 配置 |
+|------|------|
+| Empty Dir Volume | Mount path: `/var/lib/docker` |
+
+---
+
+### 4. 全局工具配置
+
+**路径**: `Manage Jenkins` → `Tools`
+
+#### 4.1 Git
+| 配置项 | 值 |
+|--------|-----|
+| Name | `Default` |
+| Path to Git executable | `git` |
+
+#### 4.2 JDK（可选）
+| 配置项 | 值 |
+|--------|-----|
+| Name | `JDK17` |
+| JAVA_HOME | `/opt/java/openjdk` |
+
+#### 4.3 Maven（可选）
+| 配置项 | 值 |
+|--------|-----|
+| Name | `Maven3` |
+| MAVEN_HOME | `/opt/maven` |
+
+---
+
+### 5. 插件管理
+
+**路径**: `Manage Jenkins` → `Plugins`
+
+#### 推荐安装的插件
+
+| 插件名称 | 用途 |
+|---------|------|
+| Kubernetes | Kubernetes 动态 Agent |
+| Pipeline | Pipeline 支持 |
+| Git | Git 集成 |
+| GitHub | GitHub 集成 |
+| GitHub Branch Source | GitHub 多分支 Pipeline |
+| Credentials Binding | 凭据绑定 |
+| Timestamper | 构建时间戳 |
+| Workspace Cleanup | 工作空间清理 |
+| Pipeline Stage View | Pipeline 阶段视图 |
+| Blue Ocean | 现代化 UI |
+| Docker Pipeline | Docker 支持 |
+| Matrix Authorization Strategy | 矩阵授权 |
+| Build Timeout | 构建超时 |
+| Email Extension | 邮件通知 |
+| SSH Agent | SSH 代理 |
+| Pipeline Utility Steps | Pipeline 工具步骤 |
+| Job DSL | Job DSL 支持 |
+| Locale | 语言本地化 |
+
+---
+
+## 📝 Pipeline 示例
+
+### 使用 Maven Agent
 
 ```groovy
 pipeline {
@@ -166,6 +496,227 @@ pipeline {
     }
 }
 ```
+
+### 使用 Node.js Agent
+
+```groovy
+pipeline {
+    agent {
+        kubernetes {
+            label 'nodejs'
+        }
+    }
+    stages {
+        stage('Build') {
+            steps {
+                container('nodejs') {
+                    sh 'npm install'
+                    sh 'npm run build'
+                }
+            }
+        }
+    }
+}
+```
+
+### 使用 Docker Agent
+
+```groovy
+pipeline {
+    agent {
+        kubernetes {
+            label 'docker'
+        }
+    }
+    stages {
+        stage('Build Image') {
+            steps {
+                container('docker') {
+                    sh 'docker build -t myapp:latest .'
+                }
+            }
+        }
+    }
+}
+```
+
+### 使用 Python Agent
+
+```groovy
+pipeline {
+    agent {
+        kubernetes {
+            label 'python'
+        }
+    }
+    stages {
+        stage('Setup') {
+            steps {
+                container('python') {
+                    sh 'pip install -r requirements.txt'
+                }
+            }
+        }
+        stage('Test') {
+            steps {
+                container('python') {
+                    sh 'python -m pytest tests/ -v'
+                }
+            }
+        }
+        stage('Lint') {
+            steps {
+                container('python') {
+                    sh 'pip install flake8'
+                    sh 'flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics'
+                }
+            }
+        }
+    }
+}
+```
+
+### 使用 Python Data Science Agent
+
+```groovy
+pipeline {
+    agent {
+        kubernetes {
+            label 'python-ds'
+        }
+    }
+    stages {
+        stage('Setup') {
+            steps {
+                container('python-ds') {
+                    sh '''
+                        pip install numpy pandas scikit-learn matplotlib
+                        pip install -r requirements.txt
+                    '''
+                }
+            }
+        }
+        stage('Train Model') {
+            steps {
+                container('python-ds') {
+                    sh 'python train.py'
+                }
+            }
+        }
+        stage('Evaluate') {
+            steps {
+                container('python-ds') {
+                    sh 'python evaluate.py'
+                }
+            }
+        }
+    }
+}
+```
+
+### 完整 Python CI/CD Pipeline 示例
+
+```groovy
+pipeline {
+    agent {
+        kubernetes {
+            label 'python'
+        }
+    }
+    
+    environment {
+        PYTHONDONTWRITEBYTECODE = '1'
+        PYTHONUNBUFFERED = '1'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Setup Virtual Environment') {
+            steps {
+                container('python') {
+                    sh '''
+                        python -m venv venv
+                        . venv/bin/activate
+                        pip install --upgrade pip
+                        pip install -r requirements.txt
+                        pip install pytest pytest-cov flake8 black
+                    '''
+                }
+            }
+        }
+        
+        stage('Code Quality') {
+            parallel {
+                stage('Lint') {
+                    steps {
+                        container('python') {
+                            sh '''
+                                . venv/bin/activate
+                                flake8 src/ tests/ --max-line-length=120
+                            '''
+                        }
+                    }
+                }
+                stage('Format Check') {
+                    steps {
+                        container('python') {
+                            sh '''
+                                . venv/bin/activate
+                                black --check src/ tests/
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Unit Tests') {
+            steps {
+                container('python') {
+                    sh '''
+                        . venv/bin/activate
+                        pytest tests/ -v --cov=src --cov-report=xml --cov-report=html
+                    '''
+                }
+            }
+            post {
+                always {
+                    publishHTML(target: [
+                        reportDir: 'htmlcov',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
+                }
+            }
+        }
+        
+        stage('Build Package') {
+            steps {
+                container('python') {
+                    sh '''
+                        . venv/bin/activate
+                        pip install build
+                        python -m build
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
+```
+
+---
 
 ## 📊 监控与日志
 
@@ -191,14 +742,18 @@ kubectl logs -n jenkins <pod-name> -c jenkins
 kubectl exec -it -n jenkins deployment/jenkins-controller -- /bin/bash
 ```
 
+---
+
 ## 🔐 安全最佳实践
 
-1. **使用 External Secrets Operator** 管理敏感信息
+1. **创建管理员账户后删除初始密码文件**
 2. **启用 HTTPS**，配置有效的 TLS 证书
 3. **限制 RBAC 权限**，仅授予必要的权限
 4. **定期更新** Jenkins 和插件版本
 5. **启用审计日志** 记录用户操作
 6. **配置备份策略** 保护 Jenkins 数据
+
+---
 
 ## 🔄 升级指南
 
@@ -212,6 +767,8 @@ kubectl set image deployment/jenkins-controller jenkins=jenkins/jenkins:lts-jdk1
 # 3. 验证升级
 kubectl rollout status deployment/jenkins-controller -n jenkins
 ```
+
+---
 
 ## 🗑️ 卸载
 
@@ -230,6 +787,8 @@ kubectl delete -f jenkins/jenkins-rbac.yaml
 kubectl delete -f jenkins/jenkins-namespace.yaml
 ```
 
+---
+
 ## ❓ 常见问题
 
 ### Q: Jenkins 启动缓慢？
@@ -240,7 +799,7 @@ A: 首次启动需要下载插件，可能需要 5-10 分钟。检查启动探�
 
 A: 检查以下配置：
 - `jenkins-agent-service` 是否正常运行
-- JCasC 中的 `jenkinsTunnel` 配置是否正确
+- Kubernetes Cloud 中的 `Jenkins tunnel` 配置是否正确
 - RBAC 权限是否足够
 
 ### Q: PVC 绑定失败？
@@ -250,11 +809,17 @@ A: 确认：
 - 存储配额足够
 - 访问模式与存储类兼容
 
+### Q: 如何查看初始管理员密码？
+
+A: 运行以下命令：
+```bash
+kubectl exec -n jenkins deployment/jenkins-controller -- cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+---
+
 ## 📚 参考资料
 
 - [Jenkins 官方文档](https://www.jenkins.io/doc/)
 - [Jenkins Kubernetes Plugin](https://plugins.jenkins.io/kubernetes/)
-- [JCasC 配置参考](https://github.com/jenkinsci/configuration-as-code-plugin)
 - [Kubernetes 最佳实践](https://kubernetes.io/docs/concepts/configuration/overview/)
-
-
