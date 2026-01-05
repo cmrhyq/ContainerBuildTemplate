@@ -1,19 +1,11 @@
-# DockerComposeTemplate
-常用的docker的docker-compose模板
-
-
+# ContainerBuildTemplate
+本库包含Docker、Kubernetes中常用的一些部署文件，比如Docker的compose，kubernetes的部署文件
 
 ## 注意
-
 1. 其中大部分容器的compose代码中都指定了networks，这项配置能够解决容器在docker重启后，容器ip地址改变的问题，若要使用此项配置，请提前运行以下命令
-
 ```shell
 docker network create --subnet=172.100.0.0/16 --gateway=172.100.0.1 --ip-range=172.100.0.0/16 -d bridge container-network
 ```
-
-
-
-
 
 ## 列表
 
