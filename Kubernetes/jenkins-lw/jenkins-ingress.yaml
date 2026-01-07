@@ -1,0 +1,66 @@
+# Jenkins Ingress - K3s Traefik 配置
+# K3s 默认使用 Traefik 作为 Ingress Controller
+
+---
+# Traefik Ingress 配置（K3s 默认）
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins-ingress
+  namespace: jenkins
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Traefik 配置
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    
+    # 请求超时配置（Pipeline 构建可能需要较长时间）
+    traefik.ingress.kubernetes.io/router.middlewares: jenkins-timeout@kubernetescrd
+    
+    # 会话粘性（可选，保持用户会话）
+    traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.name: jenkins-route
+spec:
+  ingressClassName: traefik
+  
+  rules:
+    # 使用 IP 或域名访问
+    # 如果没有域名，可以注释掉 host 字段，通过 IP 访问
+    - host: jenkins.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jenkins-service
+                port:
+                  number: 8080
+
+---
+# 无域名访问配置（通过服务器 IP 直接访问）
+# 如果你没有域名，启用这个 Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins-ingress-ip
+  namespace: jenkins
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: ingress
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /jenkins
+            pathType: Prefix
+            backend:
+              service:
+                name: jenkins-service
+                port:
+                  number: 8080
+

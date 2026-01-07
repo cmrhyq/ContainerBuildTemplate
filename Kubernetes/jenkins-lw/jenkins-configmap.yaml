@@ -1,0 +1,71 @@
+# Jenkins ConfigMap - 低配置服务器优化版（4核4G）
+# JVM 参数针对 1.5G 内存限制进行优化
+# 包含 Maven、Allure、Go、Python 工具路径配置
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-config
+  namespace: jenkins
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: config
+data:
+  # JVM 参数配置 - 适配 1.5G 内存限制
+  JAVA_OPTS: >-
+    -Xmx1024m 
+    -Xms512m 
+    -XX:+UseG1GC 
+    -XX:MaxGCPauseMillis=200
+    -XX:+UseStringDeduplication 
+    -XX:+ParallelRefProcEnabled 
+    -XX:+DisableExplicitGC
+    -XX:MaxMetaspaceSize=256m
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:HeapDumpPath=/var/jenkins_home/heapdump.hprof
+    -Duser.timezone=Asia/Shanghai 
+    -Djava.awt.headless=true 
+    -Dhudson.slaves.NodeProvisioner.initialDelay=0 
+    -Dhudson.slaves.NodeProvisioner.MARGIN=50 
+    -Dhudson.slaves.NodeProvisioner.MARGIN0=0.85
+    -Djenkins.install.runSetupWizard=true
+
+  # Jenkins 启动参数
+  JENKINS_OPTS: >-
+    --httpPort=8080
+    --sessionTimeout=60
+
+  # 插件安装列表（精简版 - 适合低配服务器）
+  plugins.txt: |
+    kubernetes:latest
+    workflow-aggregator:latest
+    git:latest
+    github:latest
+    credentials-binding:latest
+    timestamper:latest
+    ws-cleanup:latest
+    pipeline-stage-view:latest
+    docker-workflow:latest
+    matrix-auth:latest
+    antisamy-markup-formatter:latest
+    build-timeout:latest
+    ssh-agent:latest
+    pipeline-utility-steps:latest
+    locale:latest
+    allure-jenkins-plugin:latest
+
+  # 工具版本信息（供参考）
+  tools-info: |
+    # 内置开发工具版本
+    Maven: 3.9.6
+    Allure: 2.24.1
+    Go: 1.22.0
+    Python: 3.x (系统自带)
+    Java: 17 (OpenJDK)
+    
+    # 工具路径
+    MAVEN_HOME=/opt/tools/maven
+    ALLURE_HOME=/opt/tools/allure
+    GOROOT=/opt/tools/go
+    GOPATH=/var/jenkins_home/go
+
