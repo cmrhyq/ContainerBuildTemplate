@@ -1,6 +1,6 @@
 # Jenkins Deployment - 低配置服务器优化版（4核4G）
 # 适用于 K3s 单节点环境
-# 内置 Python、Maven、Allure、Go 环境
+# 构建任务通过 Kubernetes 动态 Agent Pod 运行
 
 apiVersion: apps/v1
 kind: Deployment
@@ -30,15 +30,12 @@ spec:
     spec:
       serviceAccountName: jenkins
       
-      # 优雅终止等待时间（缩短以加快重启）
+      # 优雅终止等待时间
       terminationGracePeriodSeconds: 60
       
       # 安全上下文
       securityContext:
-        runAsUser: 1000      # Jenkins 用户 UID
-        runAsGroup: 1000     # Jenkins 用户 GID
         fsGroup: 1000        # 文件系统组 - 自动设置 PVC 权限
-        runAsNonRoot: true
       
       # 初始化容器
       initContainers:
@@ -46,22 +43,18 @@ spec:
         - name: init-config
           image: busybox:1.36
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
           command:
             - /bin/sh
             - -c
             - |
               echo "=== 初始化 Jenkins 目录 ==="
-              
-              # 确保目录存在
               mkdir -p /var/jenkins_home/plugins
               mkdir -p /var/jenkins_home/jobs
               mkdir -p /var/jenkins_home/secrets
               mkdir -p /var/jenkins_home/init.groovy.d
-              mkdir -p /var/jenkins_home/go/src
-              mkdir -p /var/jenkins_home/go/bin
-              mkdir -p /var/jenkins_home/go/pkg
-              mkdir -p /var/jenkins_home/.m2/repository
-              
+              chown -R 1000:1000 /var/jenkins_home
               echo "=== 初始化完成 ==="
           volumeMounts:
             - name: jenkins-home
@@ -74,73 +67,7 @@ spec:
               cpu: 50m
               memory: 32Mi
         
-        # 2. 安装开发工具（Python、Maven、Allure、Go）
-        - name: install-tools
-          image: debian:bookworm-slim
-          imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -e
-              echo "=== 安装开发工具 ==="
-              
-              # 检查是否已安装（避免重复安装）
-              if [ -f /tools/maven/bin/mvn ] && [ -f /tools/allure/bin/allure ] && [ -f /tools/go/bin/go ]; then
-                echo "工具已存在，跳过安装"
-                exit 0
-              fi
-              
-              # 安装基础工具
-              apt-get update && apt-get install -y --no-install-recommends \
-                wget curl unzip ca-certificates
-              
-              # 定义版本
-              MAVEN_VERSION=3.9.6
-              ALLURE_VERSION=2.24.1
-              GO_VERSION=1.22.0
-              
-              # 安装 Maven
-              echo ">>> 安装 Maven ${MAVEN_VERSION}"
-              mkdir -p /tools/maven
-              wget -q https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz -O /tmp/maven.tar.gz
-              tar -xzf /tmp/maven.tar.gz -C /tools/maven --strip-components=1
-              rm -f /tmp/maven.tar.gz
-              /tools/maven/bin/mvn --version
-              
-              # 安装 Allure
-              echo ">>> 安装 Allure ${ALLURE_VERSION}"
-              mkdir -p /tools/allure
-              wget -q https://github.com/allure-framework/allure2/releases/download/${ALLURE_VERSION}/allure-${ALLURE_VERSION}.zip -O /tmp/allure.zip
-              unzip -q /tmp/allure.zip -d /tmp
-              mv /tmp/allure-${ALLURE_VERSION}/* /tools/allure/
-              rm -rf /tmp/allure.zip /tmp/allure-${ALLURE_VERSION}
-              /tools/allure/bin/allure --version
-              
-              # 安装 Go
-              echo ">>> 安装 Go ${GO_VERSION}"
-              mkdir -p /tools/go
-              wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz -O /tmp/go.tar.gz
-              tar -xzf /tmp/go.tar.gz -C /tools --strip-components=0
-              rm -f /tmp/go.tar.gz
-              /tools/go/bin/go version
-              
-              # 修复权限
-              chown -R 1000:1000 /tools
-              
-              echo "=== 工具安装完成 ==="
-          volumeMounts:
-            - name: tools
-              mountPath: /tools
-          resources:
-            limits:
-              cpu: 1000m
-              memory: 1Gi
-            requests:
-              cpu: 200m
-              memory: 256Mi
-        
-        # 3. 安装 Jenkins 插件
+        # 2. 安装 Jenkins 插件（可选 - 如果网络慢可以跳过，启动后手动安装）
         - name: install-plugins
           image: jenkins/jenkins:lts-jdk17
           imagePullPolicy: IfNotPresent
@@ -148,7 +75,7 @@ spec:
             - /bin/sh
             - -c
             - |
-              echo "=== 安装 Jenkins 插件（轻量版）==="
+              echo "=== 安装 Jenkins 插件 ==="
               
               # 检查是否已安装过插件（避免重复安装）
               if [ -f /var/jenkins_home/plugins/kubernetes.jpi ]; then
@@ -156,8 +83,19 @@ spec:
                 exit 0
               fi
               
+              # 如果网络不好，可以跳过预安装，启动后通过界面安装
+              # 取消下面这行的注释可以跳过插件安装
+              # echo "跳过插件预安装，请启动后通过界面安装"; exit 0
+              
+              # 使用官方更新中心
+              export JENKINS_UC=https://updates.jenkins.io
+              export JENKINS_UC_EXPERIMENTAL=https://updates.jenkins.io/experimental
+              export JENKINS_PLUGIN_INFO=https://updates.jenkins.io/plugin-versions.json
+              
               # 安装核心插件
-              jenkins-plugin-cli --plugins \
+              jenkins-plugin-cli \
+                --verbose \
+                --plugins \
                 kubernetes:latest \
                 workflow-aggregator:latest \
                 git:latest \
@@ -175,7 +113,7 @@ spec:
               mountPath: /var/jenkins_home
           resources:
             limits:
-              cpu: 500m
+              cpu: 1000m
               memory: 1Gi
             requests:
               cpu: 200m
@@ -196,35 +134,16 @@ spec:
           
           # 环境变量
           env:
-            # JVM 参数
             - name: JAVA_OPTS
               valueFrom:
                 configMapKeyRef:
                   name: jenkins-config
                   key: JAVA_OPTS
-            
-            # Jenkins 启动参数
             - name: JENKINS_OPTS
               valueFrom:
                 configMapKeyRef:
                   name: jenkins-config
                   key: JENKINS_OPTS
-            
-            # 工具路径配置
-            - name: MAVEN_HOME
-              value: /opt/tools/maven
-            - name: ALLURE_HOME
-              value: /opt/tools/allure
-            - name: GOROOT
-              value: /opt/tools/go
-            - name: GOPATH
-              value: /var/jenkins_home/go
-            
-            # 更新 PATH
-            - name: PATH
-              value: /opt/tools/maven/bin:/opt/tools/allure/bin:/opt/tools/go/bin:/var/jenkins_home/go/bin:/usr/local/openjdk-17/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-            
-            # Pod 信息
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -240,8 +159,8 @@ spec:
               cpu: 200m
               memory: 512Mi
             limits:
-              cpu: 2000m        # 最多使用 2 核
-              memory: 1536Mi    # 最多使用 1.5G 内存
+              cpu: 2000m
+              memory: 1536Mi
           
           # 存活探针
           livenessProbe:
@@ -252,7 +171,6 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 5
-            successThreshold: 1
           
           # 就绪探针
           readinessProbe:
@@ -263,7 +181,6 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
-            successThreshold: 1
           
           # 启动探针
           startupProbe:
@@ -273,44 +190,32 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 15
             timeoutSeconds: 10
-            failureThreshold: 40  # 允许最多 10 分钟启动时间
+            failureThreshold: 40
           
           # 生命周期钩子
           lifecycle:
             preStop:
               exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - |
-                    echo "Jenkins 正在关闭..."
-                    sleep 15
+                command: ["/bin/sh", "-c", "sleep 15"]
           
           # 卷挂载
           volumeMounts:
             - name: jenkins-home
               mountPath: /var/jenkins_home
-            - name: tools
-              mountPath: /opt/tools
             - name: tmp
               mountPath: /tmp
           
           # 容器安全上下文
           securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            capabilities:
-              drop:
-                - ALL
       
       # 卷定义
       volumes:
         - name: jenkins-home
           persistentVolumeClaim:
             claimName: jenkins-home-pvc
-        - name: tools
-          persistentVolumeClaim:
-            claimName: jenkins-tools-pvc
         - name: tmp
           emptyDir:
             sizeLimit: 500Mi

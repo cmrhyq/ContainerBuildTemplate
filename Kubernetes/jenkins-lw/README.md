@@ -453,6 +453,100 @@ spec:
 }
 ```
 
+```groovy
+// Maven 构建
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: maven
+    image: maven:3.9-eclipse-temurin-17
+    command: [sleep, infinity]
+    resources:
+      limits:
+        memory: 1Gi
+        cpu: 1000m
+'''
+        }
+    }
+    stages {
+        stage('Build') {
+            steps {
+                container('maven') {
+                    sh 'mvn --version'
+                    sh 'mvn clean package'
+                }
+            }
+        }
+    }
+}
+```
+
+```groovy
+// Go 构建
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: golang
+    image: golang:1.22
+    command: [sleep, infinity]
+'''
+        }
+    }
+    stages {
+        stage('Build') {
+            steps {
+                container('golang') {
+                    sh 'go version'
+                    sh 'go build ./...'
+                }
+            }
+        }
+    }
+}
+```
+
+```groovy
+// Python + Allure 测试
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: python
+    image: python:3.12
+    command: [sleep, infinity]
+  - name: allure
+    image: frankescobar/allure-docker-service
+    command: [sleep, infinity]
+'''
+        }
+    }
+    stages {
+        stage('Test') {
+            steps {
+                container('python') {
+                    sh 'pip install pytest allure-pytest'
+                    sh 'pytest --alluredir=allure-results'
+                }
+            }
+        }
+    }
+}
+```
+
 ---
 
 ## 📊 监控与调试

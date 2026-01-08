@@ -1,5 +1,4 @@
 # Jenkins PVC - 低配置服务器优化版
-# 包含 Jenkins Home 和开发工具存储
 
 ---
 # Jenkins Home 数据卷 - 存储配置、插件、任务等
@@ -18,24 +17,5 @@ spec:
     requests:
       storage: 10Gi  # 存储配置和构建历史
   # K3s 默认使用 local-path StorageClass
-  # storageClassName: local-path
-
----
-# 开发工具卷 - 存储 Maven、Allure、Go 等工具
-# 使用独立 PVC 避免每次重启都重新下载
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jenkins-tools-pvc
-  namespace: jenkins
-  labels:
-    app.kubernetes.io/name: jenkins
-    app.kubernetes.io/component: tools
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 3Gi  # Maven + Allure + Go 约需 1.5G
   # storageClassName: local-path
 
