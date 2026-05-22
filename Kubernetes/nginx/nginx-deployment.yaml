@@ -8,7 +8,7 @@ metadata:
     app: nginx
     version: v1
 spec:
-  replicas: 2
+  replicas: 1
   revisionHistoryLimit: 5
   strategy:
     type: RollingUpdate
@@ -72,11 +72,13 @@ spec:
           chmod -R 755 /var/log/nginx-logs
           chown -R 101:101 /var/log/nginx-logs
           
-          # 6. 初始化 HTML 目录
+          # 6. 初始化 HTML 目录并修复权限
           echo "初始化 HTML 目录..."
           if [ ! -f /usr/share/nginx-html/index.html ]; then
             echo '<h1>Welcome to Nginx on K3s!</h1>' > /usr/share/nginx-html/index.html
           fi
+          chmod -R 755 /usr/share/nginx-html
+          chown -R 101:101 /usr/share/nginx-html
           
           echo "=== 初始化完成 ==="
         volumeMounts:
@@ -216,7 +218,34 @@ spec:
       #             - nginx
       #         topologyKey: kubernetes.io/hostname
 ---
-# Service
+# Service - LoadBalancer类型
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: nginx-service
+#   namespace: develop
+#   labels:
+#     app: nginx
+# spec:
+#   selector:
+#     app: nginx
+#   ports:
+#   - name: http
+#     protocol: TCP
+#     port: 80
+#     targetPort: 80
+#   - name: https
+#     protocol: TCP
+#     port: 443
+#     targetPort: 443
+#   type: LoadBalancer
+#   # 会话亲和性（可选）
+#   # sessionAffinity: ClientIP
+#   # sessionAffinityConfig:
+#   #   clientIP:
+#   #     timeoutSeconds: 10800
+
+# Service - ClusterIP类型
 apiVersion: v1
 kind: Service
 metadata:
@@ -225,8 +254,8 @@ metadata:
   labels:
     app: nginx
 spec:
-  selector:
-    app: nginx
+  type: ClusterIP
+  sessionAffinity: None
   ports:
   - name: http
     protocol: TCP
@@ -236,37 +265,28 @@ spec:
     protocol: TCP
     port: 443
     targetPort: 443
-  type: LoadBalancer
-  # 会话亲和性（可选）
-  # sessionAffinity: ClientIP
-  # sessionAffinityConfig:
-  #   clientIP:
-  #     timeoutSeconds: 10800
+  selector:
+    app: nginx
 ---
 # Ingress（可选 - 如果使用 Traefik 或其他 Ingress Controller）
-# apiVersion: networking.k8s.io/v1
-# kind: Ingress
-# metadata:
-#   name: nginx-ingress
-#   namespace: develop
-#   labels:
-#     app: nginx
-#   annotations:
-#     kubernetes.io/ingress.class: traefik
-#     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-# spec:
-#   rules:
-#   - host: nginx.example.com
-#     http:
-#       paths:
-#       - path: /
-#         pathType: Prefix
-#         backend:
-#           service:
-#             name: nginx-service
-#             port:
-#               number: 80
-#   tls:
-#   - hosts:
-#     - nginx.example.com
-#     secretName: nginx-tls-secret
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-ingress
+  namespace: develop
+  labels:
+    app: nginx
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-service
+            port:
+              number: 80

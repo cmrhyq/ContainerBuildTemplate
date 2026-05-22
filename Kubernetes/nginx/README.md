@@ -31,7 +31,16 @@ sudo chmod -R 755 /opt/k3s/app/nginx
 echo '<h1>Welcome to Nginx on K3s!</h1>' | sudo tee /opt/k3s/app/nginx/html/index.html
 ```
 
-### 3. 准备 SSL 证书（可选）
+### 3. 上传 HTML 文件后设置权限
+
+Nginx 容器以 uid 101 (nginx) 运行，上传新文件后必须设置正确的权限，否则会返回 404：
+
+```bash
+sudo chmod -R 755 /opt/k3s/app/nginx/html/
+sudo chown -R 101:101 /opt/k3s/app/nginx/html/
+```
+
+### 4. 准备 SSL 证书（可选）
 
 如果需要 HTTPS，将证书放入 SSL 目录：
 
@@ -180,6 +189,22 @@ kubectl delete -f nginx-namespace.yaml
    ```bash
    kubectl exec -n develop -it <pod-name> -- nginx -t
    kubectl exec -n develop -it <pod-name> -- curl -v localhost/health
+   ```
+
+5. **上传 HTML 文件后返回 404**
+
+   原因：宿主机上传文件的权限不正确，nginx 进程 (uid 101) 无法读取。
+   
+   ```bash
+   # 在宿主机修复权限
+   sudo chmod -R 755 /opt/k3s/app/nginx/html/
+   sudo chown -R 101:101 /opt/k3s/app/nginx/html/
+   
+   # 验证容器内是否能看到文件
+   kubectl exec -n develop -it <pod-name> -- ls -la /usr/share/nginx/html/
+   
+   # 如果仍然 404，重启 Pod 让 initContainer 自动修复权限
+   kubectl rollout restart deployment/nginx-deployment -n develop
    ```
 
 ## 注意事项
