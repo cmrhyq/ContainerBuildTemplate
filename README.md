@@ -1,21 +1,126 @@
 # ContainerBuildTemplate
-本库包含Docker、Kubernetes中常用的一些部署文件，比如Docker的compose，kubernetes的部署文件
 
-## 注意
-1. 其中大部分容器的compose代码中都指定了networks，这项配置能够解决容器在docker重启后，容器ip地址改变的问题，若要使用此项配置，请提前运行以下命令
-```shell
-docker network create --subnet=172.100.0.0/16 --gateway=172.100.0.1 --ip-range=172.100.0.0/16 -d bridge container-network
+容器化部署模板集合，包含 Docker Compose 和 Kubernetes 两大类常用服务的部署配置文件，开箱即用。
+
+---
+
+## 项目结构
+
+```
+ContainerBuildTemplate/
+├── Docker/                         # Docker Compose 部署模板
+│   ├── mysql/                      # MySQL 数据库
+│   ├── nginx/                      # Nginx Web 服务器
+│   ├── nginx proxy manager/        # Nginx 代理管理面板
+│   ├── portainer/                  # Docker 可视化管理工具
+│   ├── redis/                      # Redis 缓存数据库
+│   ├── tomcat/                     # Tomcat 应用服务器
+│   └── xxl-job/                    # XXL-JOB 分布式任务调度
+│
+├── Kubernetes/                     # Kubernetes 部署模板
+│   ├── chromadb/                   # ChromaDB 向量数据库
+│   ├── dashboard/                  # Kubernetes Dashboard
+│   ├── jenkins/                    # Jenkins CI/CD（标准版）
+│   ├── jenkins-lw/                 # Jenkins CI/CD（低配优化版，4C4G）
+│   ├── nginx/                      # Nginx（含 HPA 自动扩缩）
+│   └── system/                     # 集群系统组件（DNS、镜像清理等）
+│
+└── README.md
 ```
 
-## 列表
+---
 
-| 名称                | 版本   | 备注                                                         |
-| ------------------- | ------ | ------------------------------------------------------------ |
-| Nginx               | latest | *Nginx是*一款轻量级的Web服务器、反向代理服务器，由于它的内存占用少，启动极快，高并发能力强，在互联网项目中广泛应用。 |
-| Tomcat              | 8.5.42 | *Tomcat*服务器是一个免费的开放源代码的Web应用服务器，属于轻量级应用服务器，在中小型系统和并发访问用户不是很多的场合下被普遍使用。 |
-| Portainer           | latest | Portainer 是一个可视化的Docker 操作界面，提供状态显示面板、应用模板快速部署、容器镜像网络数据卷的基本操作...等功能。 |
-| Redis               | 7.0.11 | Redis是一个开源的使用ANSI C语言编写、支持网络、可基于内存亦可持久化的日志型、Key-Value数据库，并提供多种语言的API。 |
-| nginx proxy manager | latest | 一个基于Docker 的工具，提供简单而强大的界面来管理Nginx 代理主机。 |
-| xxl-job-admin       | latest | XXL-JOB是一个分布式任务调度平台，admin是它的管理端           |
-| xxl-job-executor    | latest | XXL-JOB是一个分布式任务调度平台，executor是它的执行端        |
+## Docker Compose 模板
 
+### 前置条件
+
+大部分 Compose 配置中指定了自定义网络以固定容器 IP，避免 Docker 重启后 IP 变化。使用前请先创建网络：
+
+```bash
+docker network create \
+  --subnet=172.100.0.0/16 \
+  --gateway=172.100.0.1 \
+  --ip-range=172.100.0.0/16 \
+  -d bridge \
+  container-network
+```
+
+### 服务列表
+
+| 服务 | 版本 | 说明 | 目录 |
+|------|------|------|------|
+| MySQL | - | 关系型数据库，含环境变量配置 | `Docker/mysql/` |
+| Nginx | latest | 轻量级 Web 服务器、反向代理 | `Docker/nginx/` |
+| Nginx Proxy Manager | latest | 可视化 Nginx 代理管理面板，支持 SSL 证书自动申请 | `Docker/nginx proxy manager/` |
+| Portainer | latest | Docker 可视化管理界面，支持容器、镜像、网络管理 | `Docker/portainer/` |
+| Redis | 7.0.11 | 高性能 Key-Value 内存数据库，含自定义 redis.conf | `Docker/redis/` |
+| Tomcat | 8.5.42 | Java Web 应用服务器 | `Docker/tomcat/` |
+| XXL-JOB Admin | latest | 分布式任务调度平台 - 管理端 | `Docker/xxl-job/` |
+| XXL-JOB Executor | latest | 分布式任务调度平台 - 执行端 | `Docker/xxl-job/` |
+
+### 使用方式
+
+```bash
+cd Docker/<服务目录>
+
+# 启动服务
+docker compose up -d
+
+# 查看状态
+docker compose ps
+
+# 停止服务
+docker compose down
+```
+
+---
+
+## Kubernetes 部署模板
+
+### 服务列表
+
+| 服务 | 说明 | 部署方式 | 目录 |
+|------|------|---------|------|
+| ChromaDB | AI 向量数据库 | Kustomize | `Kubernetes/chromadb/` |
+| Dashboard | Kubernetes 集群管理面板 | kubectl apply | `Kubernetes/dashboard/` |
+| Jenkins | CI/CD 服务器（标准版，含完整开发工具） | Kustomize | `Kubernetes/jenkins/` |
+| Jenkins LW | CI/CD 服务器（低配优化版，适用 4C4G） | Kustomize | `Kubernetes/jenkins-lw/` |
+| Nginx | Web 服务器（含 HPA 自动扩缩、ConfigMap） | Kustomize | `Kubernetes/nginx/` |
+| System | 集群运维组件（NodeLocal DNS、镜像清理 CronJob） | kubectl apply | `Kubernetes/system/` |
+
+### 使用方式
+
+```bash
+cd Kubernetes/<服务目录>
+
+# Kustomize 部署（推荐）
+kubectl apply -k .
+
+# 查看资源状态
+kubectl get all -n <namespace>
+
+# 卸载
+kubectl delete -k .
+```
+
+---
+
+## 快速导航
+
+- [Jenkins 低配版部署指南（K3s 4C4G 优化）](Kubernetes/jenkins-lw/README.md)
+- [Jenkins 标准版部署指南](Kubernetes/jenkins/README.md)
+- [Nginx Kubernetes 部署指南](Kubernetes/nginx/README.md)
+
+---
+
+## 使用建议
+
+- **开发/测试环境**：优先使用 Docker Compose 模板，部署简单快速
+- **生产环境**：推荐使用 Kubernetes 模板，支持高可用、自动扩缩、滚动更新
+- **低配服务器**（4C4G）：使用 `jenkins-lw` 版本，已针对资源限制做专项优化
+
+---
+
+## License
+
+本项目仅供学习和内部使用参考。
